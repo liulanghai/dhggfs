@@ -82,7 +82,7 @@ int main(int argc, char *argv[])
                     events[i].data.fd = -1;
                 }
                 line[n] = '/0';
-					printf("read ：%s",line);
+					printf("read ：%s\n",line);
                 //cout << "read " << line << endl;
                 //设置用于写操作的文件描述符
 
