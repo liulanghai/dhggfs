@@ -10,10 +10,9 @@
 #define LISTENQ 20
 #define SERV_PORT 5000
 #define INFTIM 1000
-
 int main(int argc, char *argv[])
 {
- 	struct sockaddr_in clientaddr;
+ 	struct sockaddr_in clientaddr;	
 	int sockfd,len=0;
 	int i=0,n,connfd =0 ,epfd,nfds; 
 	char line[MAXLINE];
