@@ -10,6 +10,43 @@
 #define LISTENQ 20
 #define SERV_PORT 5000
 #define INFTIM 1000
+
+struct devent_base
+{
+	int epollfd;
+	struct epoll_event *dev;
+	struct epoll_event *events;	
+}
+struct devent
+{
+	struct devent_base *deventbase;
+	int deventfd;
+	int (*readcllback) (int argc ,char* argv[]);
+	int (*writecallbac) (int argc,char *argv[]);
+	int (*errorandsignl) (int argc ,char *argv[]);
+}
+struct devent_base * deventinit();//return epoll_fd
+struct devent_base * deventinit()
+{
+	struct devent_base * eventbase = (struct devent_base *) malloc(sizeof(struct devent_base));
+	eventbase->epoll_event =(struct epoll_event *) malloc(sizeof(struct epoll_event)*MAXEPOLLEVENTSIZE);
+	if((eventbase->epollfd = epoll_create(256))<0)
+		return NULL;
+	if(eventbase->epoll_event == NULL)
+		return NULL;
+	return eventbase;	
+}
+int deventset(struct devent *setdevent,int fd,int option)//return 0 success ,return <0 error
+{
+	setdevent->deventfd=fd;
+	setdevent->
+}
+int deventadd(struct devent *setdevent);//set event 
+{
+	return epoll_ctl((setdevent->deventbase)->epollfd,EPOLL_CTL_ADD,setdevent->deventfd,(setdevent->deventbase)->dev);
+}
+int deventfree(struct devent *);
+int deventpoll(struct devent *);
 int main(int argc, char *argv[])
 {
  	struct sockaddr_in clientaddr;	
@@ -27,16 +64,14 @@ int main(int argc, char *argv[])
 	char buf[100]={0};
 	epfd=epoll_create(256);
 	ev.data.fd=listenfd;
-        ev.events=EPOLLIN|EPOLLET;
-        epoll_ctl(epfd,EPOLL_CTL_ADD,listenfd,&ev);
-
+    ev.events=EPOLLIN|EPOLLET;
+    epoll_ctl(epfd,EPOLL_CTL_ADD,listenfd,&ev);
 	for ( ; ; ) 
 	{
-     	nfds=epoll_wait(epfd,events,20,500);
+ 	    nfds=epoll_wait(epfd,events,20,500);
         for(i=0;i<nfds;i++)
         {
-            if(events[i].data.fd==listenfd)//如果新监测到一个SOCKET用户连接到了绑定的SOCKET端口，建立新的连接。
-
+            if(events[i].data.fd==listenfd)
             {
                 connfd = accept(listenfd,(struct sockaddr *)&clientaddr, &len);
                 if(connfd<0)
@@ -49,45 +84,37 @@ int main(int argc, char *argv[])
                 ev.events=EPOLLIN|EPOLLET;
                 epoll_ctl(epfd,EPOLL_CTL_ADD,connfd,&ev);
             }
- 	//          if(events[i].events&EPOLLIN)//如果是已经连接的用户，并且收到数据，那么进行读入。
-      else       {
-			//	if ( (sockfd = events[i].data.fd) < 0)
-             //   {
-			//		  printf("sockfd = %d\n",sockfd);
-			//		  continue;
-			//	}
+ 	 	   	else              
+			{
+				if ( (sockfd = events[i].data.fd) < 0)
+					continue;
+					printf("read fd=%d\n",events[i].data.fd);
                 if ( (n = read(events[i].data.fd, line, MAXLINE)) < 0) 
 				{
 					 if (errno == ECONNRESET) 
 						{
-							printf("rest\n");
 	                        close(sockfd);
-	                        events[i].data.fd = -1;
-                   		 }
+                   			epoll_ctl(epfd,EPOLL_CTL_DEL,sockfd,&ev); 
+						}
 					 else
 						printf("read erro");
 			
                	 }
 				 else if (n == 0)
 				 {
+					close(sockfd);
+                   	epoll_ctl(epfd,EPOLL_CTL_DEL,sockfd,&ev);
 					printf("read no data\n");
-					break;
-                    close(sockfd);
-                    events[i].data.fd = -1;
-                 }
+                }
                 line[n] = '\0';
 				printf("read ：%s\n",line);
-
+				write(sockfd,line,n);
                 ev.data.fd=sockfd;
-                //设置用于注测的写操作事件
-
                 ev.events=EPOLLIN|EPOLLET;
-                //修改sockfd上要处理的事件为EPOLLOUT
-
                 epoll_ctl(epfd,EPOLL_CTL_MOD,sockfd,&ev);
 
-           	 }
-      		} 
-}
+           	}
+      	} 
+	}	
    return 1;
 }	
