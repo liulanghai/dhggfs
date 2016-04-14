@@ -6,14 +6,14 @@
 #include <errno.h>
 #include<stdlib.h>
 
-#define MAXEPOLLEVENTSIZE 200
-#define MAXLINE 10000
+#define MAXEPOLLEVENTSIZE 2000
+#define MAXLINE 16384
 #define OPEN_MAX 100
 #define LISTENQ 20
 #define SERV_PORT 5000
 #define INFTIM 1000
-
-struct devent_base
+char SendBuf[MAXLINE]={'A'};
+struct deventbase
 {
     int epollfd;
     struct epoll_event *events;
@@ -22,7 +22,7 @@ struct devent_base
 struct devent
 {
 
-    struct devent_base *deventbase;
+    struct deventbase *devbase;
     int deventfd;
     int option;
     void (*readcllback)();
@@ -34,9 +34,9 @@ struct deventlist
     struct devent *event;
     struct deventlist * next;
 };
-struct devent_base * deventinit()
+struct deventbase * deventinit()
 {
-    struct devent_base * eventbase = (struct devent_base *) malloc(sizeof(struct devent_base));
+    struct deventbase * eventbase = (struct deventbase *) malloc(sizeof(struct deventbase));
     eventbase->events =(struct epoll_event *) malloc(sizeof(struct epoll_event)*MAXEPOLLEVENTSIZE);
     eventbase->registereventlist=NULL;
     if((eventbase->epollfd = epoll_create(256))<0)
@@ -49,13 +49,13 @@ int register_list_del(struct devent * de)
 {
     struct deventbase *devbase;
     struct deventlist *temp,*freetemp;
-    devbase=de->deventbase;
-    temp=(de->deventbase)->registereventlist;
+    devbase=de->devbase;
+    temp=(de->devbase)->registereventlist;
     if(temp== NULL)
            return -1;
     if((temp->event)->deventfd == de->deventfd)
     {
-        (de->deventbase)->registereventlist=temp->next;
+        (de->devbase)->registereventlist=temp->next;
         free(temp);
         return 0;
     }
@@ -67,19 +67,20 @@ int register_list_del(struct devent * de)
             temp->next=freetemp->next;
             free(freetemp);
         }
+        temp=temp->next;
     }
     return 0;
 }
 int register_list_add(struct devent * de)
 {
-    if((de->deventbase)->registereventlist == NULL)
+    if((de->devbase)->registereventlist == NULL)
     {
         struct deventlist *head;
         head= (struct deventlist *)malloc (sizeof(struct deventlist));
         head->event =(struct devent * )malloc (sizeof(struct devent));
         memcpy(head->event,de,sizeof(struct devent ));
         head->next=NULL;
-        (de->deventbase)->registereventlist=head;
+        (de->devbase)->registereventlist=head;
 
     }else
     {
@@ -87,8 +88,8 @@ int register_list_add(struct devent * de)
         head= (struct deventlist * )malloc (sizeof(struct deventlist));
         head->event =(struct devent *)malloc (sizeof(struct devent));
         memcpy(head->event,de,sizeof(struct devent ));
-        head->next=(de->deventbase)->registereventlist;
-        (de->deventbase)->registereventlist =head;
+        head->next=(de->devbase)->registereventlist;
+        (de->devbase)->registereventlist =head;
     }
 }
 int devent_add(struct devent *setdevent)//set event
@@ -97,7 +98,7 @@ int devent_add(struct devent *setdevent)//set event
         dev.data.fd=setdevent->deventfd;
         dev.events=setdevent->option;
         register_list_add(setdevent);
-        return epoll_ctl((setdevent->deventbase)->epollfd,EPOLL_CTL_ADD,setdevent->deventfd,&dev);
+        return epoll_ctl((setdevent->devbase)->epollfd,EPOLL_CTL_ADD,setdevent->deventfd,&dev);
 }
 
 int devent_del(struct devent *deldevent)
@@ -105,13 +106,13 @@ int devent_del(struct devent *deldevent)
     struct epoll_event dev;
     dev.data.fd=deldevent->deventfd;
     dev.events=deldevent->option;
-    if(epoll_ctl((deldevent->deventbase)->epollfd,EPOLL_CTL_DEL,deldevent->deventfd,&dev) <0)
+    if(epoll_ctl((deldevent->devbase)->epollfd,EPOLL_CTL_DEL,deldevent->deventfd,&dev) <0)
         return -1;
     return register_list_del(deldevent);
 }
- void dothing(int fd,struct  devent_base* deventbase)
+ void dothing(int fd,struct  deventbase* devbase)
 {
-    struct deventlist *temp=deventbase->registereventlist;
+    struct deventlist *temp=devbase->registereventlist;
     while(temp!=NULL)
     {
         if((temp->event->deventfd) == fd)
@@ -121,19 +122,19 @@ int devent_del(struct devent *deldevent)
         temp=temp->next;
     }
 }
-int devent_poll(struct  devent_base* deventbase)
+int devent_poll(struct  deventbase* devbase)
 {
     int nfds;
     int i;
     struct epoll_event *temp;
-    temp=deventbase->events;
+    temp=devbase->events;
     while(1)
     {
-          nfds=epoll_wait(deventbase->epollfd,temp,20,500);
+          nfds=epoll_wait(devbase->epollfd,temp,20,500);
           for(i=0;i<nfds;i++)
           {
 
-              dothing(temp[i].data.fd,deventbase);
+              dothing(temp[i].data.fd,devbase);
           }
 
     }
@@ -145,25 +146,28 @@ void myread(struct devent * readevent)
 {
     char buf[100];
     int n=-1;
+    int ntowrite;
+
     n=read(readevent->deventfd,buf,100);
     if(n==0)
     {
         printf("read nothing\n");
         devent_del(readevent);
+        return;
     }
-    if(n>0)
-    {
-        buf[n]=0;
-        printf("read :%s\n",buf);
-        write(readevent->deventfd,buf,n);
-    }
+   //  ntowrite = atol(buf);
+    if ((ntowrite <= 0) || (ntowrite > MAXLINE))
+
+          write(readevent->deventfd, SendBuf, 100);
+
+    /**/
 }
 void myaccept(struct devent * readevent)
 {
     int connfd = accept(listenfd,(struct sockaddr *)&clientaddr, &len);
 
     struct devent listenevent;
-    listenevent.deventbase=readevent->deventbase;
+    listenevent.devbase=readevent->devbase;
     listenevent.deventfd=connfd;
     listenevent.readcllback=myread;
     listenevent.writecallbac=NULL;
@@ -179,18 +183,19 @@ int main(int argc, char *argv[])
 {
     //struct sockaddr_in clientaddr;
     int sockfd;
+    char line[1024];
     int i=0,n,connfd =0 ,epfd,nfds;
-    char line[MAXLINE];
     struct epoll_event ev,events[20];
-    listenfd=create_socket_and_listen(INADDR_ANY,2456,5);
+    listenfd=create_socket_and_listen(INADDR_ANY,2456,10000);
     if(listenfd < 0)
     {
             printf("listen erro %d\n",listenfd);
             return 1 ;
     }
-   struct  devent_base *mydevenbase=deventinit();
+    memset(SendBuf,'A',MAXLINE);
+   struct  deventbase *mydevenbase=deventinit();
    struct devent listenevent;
-   listenevent.deventbase=mydevenbase;
+   listenevent.devbase=mydevenbase;
    listenevent.deventfd=listenfd;
    listenevent.option=EPOLLIN|EPOLLET;
    listenevent.readcllback= myaccept;

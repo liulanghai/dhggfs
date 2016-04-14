@@ -4,3 +4,4 @@
 #include <sys/socket.h>
 //#include <sys/net.h>
 #include <netinet/in.h>
+#include <string.h>
