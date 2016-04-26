@@ -5,13 +5,31 @@
 #include <unistd.h>
 #include <errno.h>
 #include<stdlib.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+#include <signal.h>
+#include <stdio.h>
+#include <pthread.h>
+#include <string.h>
+
+//#include <readline/readline.h>
+//#include <readline/history.h>
+
 
 #define MAXEPOLLEVENTSIZE 2000
 #define MAXLINE 16384
 #define OPEN_MAX 100
-#define LISTENQ 20
+#define LISTENQ 2000
 #define SERV_PORT 5000
 #define INFTIM 1000
+#define MAXN    16384       /* max # bytes client can request */
+
+ void handler(int num)
+   {
+       int status;
+       int pid = waitpid(-1,&status,WNOHANG);
+   }
+
 char SendBuf[MAXLINE]={'A'};
 struct deventbase
 {
@@ -25,9 +43,9 @@ struct devent
     struct deventbase *devbase;
     int deventfd;
     int option;
-    void (*readcllback)();
-    void (*writecallbac)();
-    void (*errorandsignl)();
+    void (*readcllback)(struct devent *);
+    void (*writecallbac)(struct devent *);
+    void (*errorandsignl)(struct devent *);
 };
 struct deventlist
 {
@@ -91,33 +109,58 @@ int register_list_add(struct devent * de)
         head->next=(de->devbase)->registereventlist;
         (de->devbase)->registereventlist =head;
     }
+    return 0;
 }
 int devent_add(struct devent *setdevent)//set event
 {
         struct epoll_event dev;
+        struct devent * connectevent = ( struct devent *)malloc(sizeof(struct devent));
+        memcpy(connectevent,setdevent,sizeof(struct devent ));
+
         dev.data.fd=setdevent->deventfd;
         dev.events=setdevent->option;
-        register_list_add(setdevent);
-        return epoll_ctl((setdevent->devbase)->epollfd,EPOLL_CTL_ADD,setdevent->deventfd,&dev);
+        register_list_add(connectevent);
+        return epoll_ctl((connectevent->devbase)->epollfd,EPOLL_CTL_ADD,connectevent->deventfd,&dev);
 }
-
 int devent_del(struct devent *deldevent)
 {
     struct epoll_event dev;
+
     dev.data.fd=deldevent->deventfd;
     dev.events=deldevent->option;
     if(epoll_ctl((deldevent->devbase)->epollfd,EPOLL_CTL_DEL,deldevent->deventfd,&dev) <0)
         return -1;
+    close(deldevent->deventfd);
     return register_list_del(deldevent);
 }
- void dothing(int fd,struct  deventbase* devbase)
+void web_child(struct devent * readevent);
+void myaccept(struct devent * readevent)
 {
+    int connfd = accept(listenfd,(struct sockaddr *)&clientaddr, &len);
+
+    struct devent listenevent;
+    listenevent.devbase=readevent->devbase;
+    listenevent.deventfd=connfd;
+    listenevent.readcllback=web_child;
+    listenevent.writecallbac=NULL;
+    listenevent.option=EPOLLIN|EPOLLET;
+    if(devent_add(&listenevent)<0)
+        printf("devent add is error\n");
+
+    if(connfd>0)
+        printf("a client is connect\n");
+}
+void dothing(int fd,struct  deventbase* devbase)
+{
+    int c=-1;
     struct deventlist *temp=devbase->registereventlist;
     while(temp!=NULL)
     {
         if((temp->event->deventfd) == fd)
         {
-            (*(temp->event)->readcllback)(temp->event);
+            printf("read from client\n");
+            ((temp->event)->readcllback))(temp->event);
+            break;
         }
         temp=temp->next;
     }
@@ -126,18 +169,54 @@ int devent_poll(struct  deventbase* devbase)
 {
     int nfds;
     int i;
+    int childprocess;
     struct epoll_event *temp;
     temp=devbase->events;
     while(1)
     {
-          nfds=epoll_wait(devbase->epollfd,temp,20,500);
+          nfds=epoll_wait(devbase->epollfd,temp,1000,500);
           for(i=0;i<nfds;i++)
           {
 
-              dothing(temp[i].data.fd,devbase);
+              if((childprocess =fork()) == 0)
+                {
+                    printf("start dothing\n");
+                    dothing(temp[i].data.fd,devbase);
+                    exit(0);
+                }
           }
 
     }
+}
+/**************************************************************/
+//int     getrusage(int, struct rusage *);
+
+void
+pr_cpu_time(void)
+{
+    double          user, sys;
+    struct rusage   myusage, childusage;
+
+    if (getrusage(RUSAGE_SELF, &myusage) < 0)
+    {
+        printf("getrusage error\n");
+        return ;
+    }
+    if (getrusage(RUSAGE_CHILDREN, &childusage) < 0)
+     {
+        printf("getrusage error");
+        return ;
+    }
+    user = (double) myusage.ru_utime.tv_sec +
+                    myusage.ru_utime.tv_usec/1000000.0;
+    user += (double) childusage.ru_utime.tv_sec +
+                     childusage.ru_utime.tv_usec/1000000.0;
+    sys = (double) myusage.ru_stime.tv_sec +
+                   myusage.ru_stime.tv_usec/1000000.0;
+    sys += (double) childusage.ru_stime.tv_sec +
+                    childusage.ru_stime.tv_usec/1000000.0;
+
+    printf("\nuser time = %g, sys time = %g\n", user, sys);
 }
 struct sockaddr_in clientaddr;
 int listenfd,len;
@@ -155,33 +234,48 @@ void myread(struct devent * readevent)
         devent_del(readevent);
         return;
     }
-   //  ntowrite = atol(buf);
     if ((ntowrite <= 0) || (ntowrite > MAXLINE))
 
           write(readevent->deventfd, SendBuf, 100);
-
-    /**/
 }
-void myaccept(struct devent * readevent)
+
+void sig_int(int signo)
+ {
+    void    pr_cpu_time(void);
+    pr_cpu_time();
+    exit(0);
+}
+
+
+void web_child(struct devent * readevent)
 {
-    int connfd = accept(listenfd,(struct sockaddr *)&clientaddr, &len);
-
-    struct devent listenevent;
-    listenevent.devbase=readevent->devbase;
-    listenevent.deventfd=connfd;
-    listenevent.readcllback=myread;
-    listenevent.writecallbac=NULL;
-    listenevent.option=EPOLLIN|EPOLLET;
-    devent_add(&listenevent);
-
-    if(connfd>0)
-        printf("a client is connect\n");
-   // if(devent_del(readevent)>-1)
-     //   printf("del is ok");
+    int         ntowrite;
+    ssize_t     nread;
+    int writesize=0,temp=0;
+    char        line[MAXLINE], result[MAXN];
+    printf("web child\n");
+        if ( (nread = read(readevent->deventfd, line, MAXLINE)) == 0)
+           {
+              if(  devent_del(readevent)<0);
+                printf("devent_del error \n");
+                return;     /* connection closed by other end */
+           }
+            /* 4line from client specifies #bytes to write back */
+        ntowrite = atol(line);
+        if ((ntowrite <= 0) || (ntowrite > MAXN))
+        {
+            printf("client request for %d bytes\n", ntowrite);
+            return ;
+        }else
+              printf("client request for %d bytes\n", ntowrite);
+        while(writesize<ntowrite)
+        {
+          temp=write(readevent->deventfd, &result[writesize], ntowrite);
+          writesize+=temp;
+        }
 }
 int main(int argc, char *argv[])
 {
-    //struct sockaddr_in clientaddr;
     int sockfd;
     char line[1024];
     int i=0,n,connfd =0 ,epfd,nfds;
@@ -192,7 +286,9 @@ int main(int argc, char *argv[])
             printf("listen erro %d\n",listenfd);
             return 1 ;
     }
+    signal(SIGINT, sig_int);
     memset(SendBuf,'A',MAXLINE);
+    signal(SIGCHLD,handler);
    struct  deventbase *mydevenbase=deventinit();
    struct devent listenevent;
    listenevent.devbase=mydevenbase;
@@ -201,13 +297,9 @@ int main(int argc, char *argv[])
    listenevent.readcllback= myaccept;
    listenevent.writecallbac=NULL;
    devent_add(&listenevent);
-   // ev.events=EPOLLIN|EPOLLET;
-   // epoll_ctl(epfd,EPOLL_CTL_ADD,listenfd,&ev);
    devent_poll(mydevenbase);
-    for ( ; ; )
-    {
-        nfds=epoll_wait(epfd,events,20,500);
-    for(i=0;i<nfds;i++)
+    return 1;
+  /*  for(i=0;i<nfds;i++)
     {
         if(events[i].data.fd==listenfd)
         {
@@ -254,5 +346,5 @@ int main(int argc, char *argv[])
             }
     }
     }
-return 1;
+return 1;*/
 }
