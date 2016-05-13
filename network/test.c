@@ -24,7 +24,7 @@
 #define SERV_PORT 5000
 #define INFTIM 1000
 #define MAXN    16384       /* max # bytes client can request */
-
+#pragma pack (1) //强制1字节对齐
  void handler(int num)
    {
        int status;
@@ -100,6 +100,7 @@ int register_list_add(struct devent * de)
         memcpy(head->event,de,sizeof(struct devent ));
         head->next=NULL;
         (de->devbase)->registereventlist=head;
+        return 0;
 
     }else
     {
@@ -115,19 +116,10 @@ int register_list_add(struct devent * de)
 int devent_add(struct devent *setdevent)//set event
 {
         struct epoll_event dev;
-        struct devent * connectevent = ( struct devent *)malloc(sizeof(struct devent));
-      //  memcpy(connectevent,setdevent,sizeof(struct devent ));
-        connectevent->devbase=setdevent->devbase;
-        connectevent->deventfd=setdevent->deventfd;
-        connectevent->errorandsignl=setdevent->errorandsignl;
-        connectevent->option=setdevent->option;
-        connectevent->readcllback=setdevent->readcllback;
-        connectevent->writecallbac=setdevent->writecallbac;
-
         dev.data.fd=setdevent->deventfd;
         dev.events=setdevent->option;
-        register_list_add(connectevent);
-        return epoll_ctl((connectevent->devbase)->epollfd,EPOLL_CTL_ADD,connectevent->deventfd,&dev);
+        register_list_add(setdevent);
+        return epoll_ctl((setdevent->devbase)->epollfd,EPOLL_CTL_ADD,setdevent->deventfd,&dev);
 }
 int devent_del(struct devent *deldevent)
 {
@@ -151,7 +143,7 @@ void myaccept(struct devent * readevent)
     struct devent listenevent;
     listenevent.devbase=readevent->devbase;
     listenevent.deventfd=connfd;
-    listenevent.readcllback=readandreturn;
+    listenevent.readcllback=web_child;
     listenevent.writecallbac=NULL;
     listenevent.option=EPOLLIN|EPOLLET;
     if(devent_add(&listenevent)<0)
@@ -161,12 +153,18 @@ void myaccept(struct devent * readevent)
         printf("a client is connect\n");
 }
 
-void dothing(void * arg)
+//void dothing( )
+struct fdanddevbase
 {
-    int fd;
-    struct  deventbase* devbase;
-    memcpy(&fd,arg,sizeof(int));
-    memcpy(devbase,&arg[sizeof(int)],sizeof(devbase));
+   int fd;
+  struct  deventbase* mybase;
+};
+void dothing(char *arg)
+{
+    struct fdanddevbase *mydet=(struct fdanddevbase*)arg;
+     struct  deventbase *devbase=mydet->mybase;
+     struct deventbase p;
+     int fd=mydet->fd;
     int c=-1;
     struct deventlist *temp=devbase->registereventlist;
     while(temp!=NULL)
@@ -184,25 +182,30 @@ int devent_poll(struct  deventbase* devbase)
 {
     int nfds=0;
     int i;
+    unsigned long long teste=0;
     struct epoll_event *temp;
+
+     struct fdanddevbase mydet;
+      mydet.mybase=devbase;
     temp=devbase->events;
     int count=0;
     while(1)
     {
-          nfds=epoll_wait(devbase->epollfd,temp,1000,500);
+          nfds=epoll_wait(devbase->epollfd,temp,100,500);
           for(i=0;i<nfds;i++)
           {
               printf("count=%d\n",count);
               count++;
-              char *changhsu=(char *)malloc(sizeof(char)*100);
-              memcpy(changhsu,&temp[i].data.fd,sizeof(int));
-              memcpy(&changhsu[sizeof(int)],devbase,sizeof(devbase));
-              pthread_t tid1;
-              int err  = pthread_create(tid1,NULL,dothing,changhsu);
-              if(err!=0)
-              {
-                  printf("create pthread error\n");
-              }
+
+            pthread_t tid1;
+
+            mydet.fd=temp[i].data.fd;
+           //   dothing(&mydet);
+            int err  = pthread_create(tid1,NULL,dothing,&mydet);
+             // if(err!=0)
+             // {
+             //     printf("create pthread error\n");
+            //  }
           }
 
     }
@@ -305,6 +308,28 @@ void web_child(struct devent * readevent)
           writesize+=temp;
         }
 }
+void readcallback(int fd,char * data ,int length)
+{
+    int         ntowrite;
+    ssize_t     nread;
+    int writesize=0,temp=0;
+    char        line[MAXLINE], result[MAXN];
+    printf("web child\n");
+
+        ntowrite = atol(data);
+        if ((ntowrite <= 0) || (ntowrite > MAXN))
+        {
+            printf("client request for %d bytes\n", ntowrite);
+            return ;
+        }else
+              printf("client request for %d bytes\n", ntowrite);
+    //    while(writesize<ntowrite)
+        {
+          temp=send(fd, &result[writesize], ntowrite,0);
+          writesize+=temp;
+        }
+}
+/*
 int main(int argc, char *argv[])
 {
     int sockfd;
@@ -333,3 +358,87 @@ int main(int argc, char *argv[])
     return 1;
 
 }
+*/
+struct sockaddr_in clientaddr;
+int listenfd,len;
+int main(int argc, char *argv[])
+{
+    int sockfd;
+    char line[1024];
+    int i=0,n,connfd =0 ,epfd,nfds=0;
+    struct epoll_event ev,events[2000];
+    int listenfd=create_socket_and_listen(INADDR_ANY,2456,10000);
+
+    if(listenfd < 0)
+    {
+            printf("listen erro %d\n",listenfd);
+            return 1 ;
+    }
+  //  memset(SendBuf,'A',MAXLINE);
+
+
+
+   signal(SIGCHLD,handler);
+    epfd = epoll_create (2000);
+    ev.data.fd=listenfd;
+    ev.events=EPOLLIN|EPOLLET;
+    epoll_ctl(epfd,EPOLL_CTL_ADD,listenfd,&ev);
+    printf("start epoll\n");
+     pid_t         childpid;
+    while(1)
+    {
+        nfds = epoll_wait(epfd,events,2000,-1);
+        printf("nfds=%d\n",nfds);
+        for(i=0;i<nfds;i++)
+        {
+            if(events[i].data.fd==listenfd)
+            {
+                connfd = accept(listenfd,(struct sockaddr *)&clientaddr, &len);
+                if (errno == EINTR)
+                          continue;
+                if(connfd<0)
+                                {
+                    perror("connfd<0");
+                    continue;
+                 //   exit(1);
+                }
+                printf("a client connect\n");
+                ev.data.fd=connfd;
+                ev.events=EPOLLIN|EPOLLET;
+                epoll_ctl(epfd,EPOLL_CTL_ADD,connfd,&ev);
+            }
+            else if( events[i].events&EPOLLIN )
+              {
+                    printf("read from client \n");
+                    if ( (sockfd = events[i].data.fd) < 0)
+                                        continue;
+                        printf("read fd=%d\n",events[i].data.fd);
+                    if ( (n = read(events[i].data.fd, line, MAXLINE)) < 0)
+                     {
+                          if (errno == ECONNRESET)
+                           {
+
+                                epoll_ctl(epfd,EPOLL_CTL_DEL,sockfd,&ev);
+                                close(sockfd);
+                                continue;
+                            }
+                             else
+                          { printf("read erro");
+                            continue;
+                          }
+                     }
+                     else if (n == 0)//client closed
+                    {
+                          epoll_ctl(epfd,EPOLL_CTL_DEL,sockfd,&ev);
+                            close(sockfd);
+                          continue;
+                    }
+                    line[n] = '\0';
+                    printf("read ：%s\n",line);
+                    readcallback(sockfd,line,n);
+                }
+        }
+    }
+return 1;
+}
+
